@@ -1,8 +1,9 @@
 use actix_web::{App, HttpServer};
 use std::sync::LazyLock;
-use surrealdb::engine::remote::ws::Client;
-use surrealdb::engine::remote::ws::Ws;
+use surrealdb::engine::local::Db;
+use surrealdb::engine::local::TiKv;
 use surrealdb::opt::auth::Root;
+use surrealdb::opt::Config;
 use surrealdb::Surreal;
 
 mod error;
@@ -11,11 +12,12 @@ mod routes;
 const NAMESPACE: &str = "test";
 const DATABASE: &str = "test";
 
-static DB: LazyLock<Surreal<Client>> = LazyLock::new(Surreal::init);
+static DB: LazyLock<Surreal<Db>> = LazyLock::new(|| Surreal::init());
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    DB.connect::<Ws>("localhost:8000").await?;
+    DB.connect::<TiKv>(("127.0.0.1:2379", Config::default().strict()))
+        .await?;
 
     DB.signin(Root {
         username: "root",
@@ -26,19 +28,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     DB.use_ns(NAMESPACE).use_db(DATABASE).await?;
 
     DB.query(
-        "DEFINE TABLE person SCHEMALESS
-        PERMISSIONS FOR
-            CREATE, SELECT WHERE $auth,
-            FOR UPDATE, DELETE WHERE created_by = $auth;
-    DEFINE FIELD name ON TABLE person TYPE string;
-    DEFINE FIELD created_by ON TABLE person VALUE $auth READONLY;
-
-    DEFINE INDEX unique_name ON TABLE user FIELDS name UNIQUE;
-    DEFINE ACCESS account ON DATABASE TYPE RECORD
-	SIGNUP ( CREATE user SET name = $name, pass = crypto::argon2::generate($pass) )
-	SIGNIN ( SELECT * FROM user WHERE name = $name AND crypto::argon2::compare(pass, $pass) )
-	DURATION FOR TOKEN 15m, FOR SESSION 12h
-;",
+        "
+DEFINE TABLE person TYPE ANY SCHEMALESS
+	PERMISSIONS
+		FOR select, create
+			WHERE $auth
+		FOR update, delete
+			WHERE created_by = $auth;
+DEFINE FIELD name ON person TYPE string
+	PERMISSIONS FULL;
+DEFINE FIELD created_by ON person READONLY VALUE $auth
+	PERMISSIONS FULL;
+DEFINE INDEX unique_name ON user FIELDS name UNIQUE;
+DEFINE ACCESS account ON DATABASE TYPE RECORD
+    SIGNUP (CREATE user SET name = $name, pass = crypto::argon2::generate($pass))
+    SIGNIN (SELECT * FROM user WHERE name = $name AND crypto::argon2::compare(pass, $pass))
+    DURATION FOR TOKEN 15m, FOR SESSION 12h;
+        ",
     )
     .await?;
 

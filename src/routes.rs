@@ -112,5 +112,5 @@ pub async fn make_new_user() -> Result<String, Error> {
 #[get("/new_token")]
 pub async fn get_new_token() -> String {
     let command = r#"curl -X POST -H "Accept: application/json" -d '{"ns":"{NAMESPACE}","db":"{DATABASE}","ac":"account","user":"your_username","pass":"your_password"}' http://localhost:8000/signin"#;
-    format!("Need a new token? Use this command:\n\n{command}\n\nThen log in with surreal sql --namespace namespace --database database --pretty --token YOUR_TOKEN_HERE")
+    format!("Need a new token? Use this command:\n\n{command}\n\nThen log in with surreal sql --namespace {NAMESPACE} --database {DATABASE} --pretty --token YOUR_TOKEN_HERE")
 }
