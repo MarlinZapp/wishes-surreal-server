@@ -1,4 +1,5 @@
 use actix_web::{App, HttpServer};
+use routes::WishStatus;
 use std::sync::LazyLock;
 use surrealdb::engine::local::Db;
 use surrealdb::engine::local::TiKv;
@@ -6,11 +7,15 @@ use surrealdb::opt::auth::Root;
 use surrealdb::opt::Config;
 use surrealdb::Surreal;
 
+mod auth;
 mod error;
 mod routes;
 
 const NAMESPACE: &str = "test";
 const DATABASE: &str = "test";
+const TABLE_USER: &str = "user";
+const TABLE_WISH: &str = "wish";
+const ACCESS_RULE_ACCOUNT: &str = "account";
 
 static DB: LazyLock<Surreal<Db>> = LazyLock::new(|| Surreal::init());
 
@@ -27,37 +32,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     DB.use_ns(NAMESPACE).use_db(DATABASE).await?;
 
-    DB.query(
+    let wish_status_enum: String = "'".to_string()
+        + WishStatus::Submitted.to_string().as_str()
+        + "' | '"
+        + &WishStatus::CreationInProgress.to_string()
+        + "' | '"
+        + &WishStatus::InDelivery.to_string()
+        + "' | '"
+        + &WishStatus::Delivered.to_string()
+        + "'";
+    DB.query(format!(
         "
-DEFINE TABLE person TYPE ANY SCHEMALESS
+DEFINE TABLE {TABLE_WISH} TYPE ANY SCHEMALESS
 	PERMISSIONS
 		FOR select, create
 			WHERE $auth
 		FOR update, delete
 			WHERE created_by = $auth;
-DEFINE FIELD name ON person TYPE string
+DEFINE FIELD content ON {TABLE_WISH} TYPE string
 	PERMISSIONS FULL;
-DEFINE FIELD created_by ON person READONLY VALUE $auth
+DEFINE FIELD status ON {TABLE_WISH} TYPE {wish_status_enum}
+    PERMISSIONS FULL;
+DEFINE FIELD created_by ON {TABLE_WISH} READONLY VALUE $auth
 	PERMISSIONS FULL;
-DEFINE INDEX unique_name ON user FIELDS name UNIQUE;
-DEFINE ACCESS account ON DATABASE TYPE RECORD
-    SIGNUP (CREATE user SET name = $name, pass = crypto::argon2::generate($pass))
-    SIGNIN (SELECT * FROM user WHERE name = $name AND crypto::argon2::compare(pass, $pass))
+DEFINE INDEX unique_name ON {TABLE_USER} FIELDS name UNIQUE;
+DEFINE ACCESS {ACCESS_RULE_ACCOUNT} ON DATABASE TYPE RECORD
+    SIGNUP (CREATE {TABLE_USER} SET name = $name, pass = crypto::argon2::generate($pass))
+    SIGNIN (SELECT * FROM {TABLE_USER} WHERE name = $name AND crypto::argon2::compare(pass, $pass))
     DURATION FOR TOKEN 15m, FOR SESSION 12h;
         ",
-    )
+    ))
     .await?;
 
     HttpServer::new(|| {
         App::new()
-            .service(routes::create_person)
-            .service(routes::read_person)
-            .service(routes::update_person)
-            .service(routes::delete_person)
-            .service(routes::list_people)
+            .service(routes::create_wish)
+            .service(routes::create_wish_with_id)
+            .service(routes::read_wish)
+            .service(routes::progress_wish_status)
+            .service(routes::delete_wish)
+            .service(routes::list_wishes)
             .service(routes::paths)
             .service(routes::session)
-            .service(routes::make_new_user)
+            .service(routes::register_user)
             .service(routes::get_new_token)
     })
     .bind(("localhost", 8080))?
