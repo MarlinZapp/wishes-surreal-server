@@ -1,6 +1,14 @@
 use actix_web::HttpRequest;
+use std::fmt::Display;
 
+#[derive(Debug)]
 pub struct AuthToken(pub String);
+
+impl Display for AuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AuthToken:{}", self.0)
+    }
+}
 
 impl TryFrom<HttpRequest> for AuthToken {
     type Error = &'static str;

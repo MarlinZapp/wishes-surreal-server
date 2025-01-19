@@ -1,4 +1,5 @@
 use actix_web::{App, HttpServer};
+use routes::UserRole;
 use routes::WishStatus;
 use std::sync::LazyLock;
 use surrealdb::engine::local::Db;
@@ -32,32 +33,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     DB.use_ns(NAMESPACE).use_db(DATABASE).await?;
 
-    let wish_status_enum: String = "'".to_string()
-        + WishStatus::Submitted.to_string().as_str()
-        + "' | '"
-        + &WishStatus::CreationInProgress.to_string()
-        + "' | '"
-        + &WishStatus::InDelivery.to_string()
-        + "' | '"
-        + &WishStatus::Delivered.to_string()
-        + "'";
+    let wish_status_enum: String = format!(
+        "'{:?}' | '{:?}' | '{:?}' | '{:?}'",
+        WishStatus::Submitted,
+        WishStatus::CreationInProgress,
+        WishStatus::InDelivery,
+        WishStatus::Delivered,
+    );
+    let user_roles_enum: String = format!("'{:?}' | '{:?}' ", UserRole::Default, UserRole::Admin,);
     DB.query(format!(
         "
-DEFINE TABLE {TABLE_WISH} TYPE ANY SCHEMALESS
+DEFINE TABLE OVERWRITE {TABLE_WISH} SCHEMAFULL
 	PERMISSIONS
-		FOR select, create
+		FOR create
 			WHERE $auth
-		FOR update, delete
-			WHERE created_by = $auth;
-DEFINE FIELD content ON {TABLE_WISH} TYPE string
+		FOR select, update, delete
+		  WHERE created_by.id = $auth.id OR 'Admin' IN $auth.roles;
+DEFINE FIELD OVERWRITE content ON {TABLE_WISH} TYPE string
 	PERMISSIONS FULL;
-DEFINE FIELD status ON {TABLE_WISH} TYPE {wish_status_enum}
+DEFINE FIELD OVERWRITE status ON {TABLE_WISH} TYPE {wish_status_enum}
     PERMISSIONS FULL;
-DEFINE FIELD created_by ON {TABLE_WISH} READONLY VALUE $auth
+DEFINE FIELD OVERWRITE created_by ON {TABLE_WISH} READONLY VALUE $auth
 	PERMISSIONS FULL;
-DEFINE INDEX unique_name ON {TABLE_USER} FIELDS name UNIQUE;
-DEFINE ACCESS {ACCESS_RULE_ACCOUNT} ON DATABASE TYPE RECORD
-    SIGNUP (CREATE {TABLE_USER} SET name = $name, pass = crypto::argon2::generate($pass))
+
+DEFINE TABLE OVERWRITE {TABLE_USER} SCHEMAFULL
+	PERMISSIONS
+		FOR select, update, delete WHERE id = $auth.id OR 'Admin' IN $auth.roles;
+DEFINE FIELD OVERWRITE name ON {TABLE_USER} TYPE string
+    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE pass ON {TABLE_USER} TYPE string
+    PERMISSIONS FULL;
+DEFINE FIELD OVERWRITE roles ON {TABLE_USER} TYPE array<{user_roles_enum}>
+    PERMISSIONS FULL;
+DEFINE INDEX OVERWRITE unique_name ON {TABLE_USER} FIELDS name UNIQUE;
+DEFINE ACCESS OVERWRITE {ACCESS_RULE_ACCOUNT} ON DATABASE TYPE RECORD
+    SIGNUP (
+        CREATE {TABLE_USER} SET name = $name, pass = crypto::argon2::generate($pass), roles = $roles
+    )
     SIGNIN (SELECT * FROM {TABLE_USER} WHERE name = $name AND crypto::argon2::compare(pass, $pass))
     DURATION FOR TOKEN 15m, FOR SESSION 12h;
         ",
@@ -66,6 +78,7 @@ DEFINE ACCESS {ACCESS_RULE_ACCOUNT} ON DATABASE TYPE RECORD
 
     HttpServer::new(|| {
         App::new()
+            .service(routes::check_auth)
             .service(routes::create_wish)
             .service(routes::create_wish_with_id)
             .service(routes::read_wish)
@@ -73,9 +86,8 @@ DEFINE ACCESS {ACCESS_RULE_ACCOUNT} ON DATABASE TYPE RECORD
             .service(routes::delete_wish)
             .service(routes::list_wishes)
             .service(routes::paths)
-            .service(routes::session)
             .service(routes::register_user)
-            .service(routes::get_new_token)
+            .service(routes::login)
     })
     .bind(("localhost", 8080))?
     .run()

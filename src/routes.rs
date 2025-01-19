@@ -1,31 +1,18 @@
-use std::fmt;
-
 use crate::auth::AuthToken;
 use crate::error::Error;
 use crate::{DATABASE, DB, NAMESPACE, TABLE_WISH};
 use actix_web::web::{Json, Path};
-use actix_web::{delete, get, post, put, HttpRequest};
+use actix_web::{delete, get, patch, post, HttpRequest};
 use serde::{Deserialize, Serialize};
 use surrealdb::opt::auth::Record;
 use surrealdb::RecordId;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum WishStatus {
     Submitted,
     CreationInProgress,
     InDelivery,
     Delivered,
-}
-
-impl fmt::Display for WishStatus {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            WishStatus::Submitted => write!(f, "Submitted"),
-            WishStatus::CreationInProgress => write!(f, "CreationInProgress"),
-            WishStatus::InDelivery => write!(f, "InDelivery"),
-            WishStatus::Delivered => write!(f, "Delivered"),
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -34,6 +21,19 @@ pub struct WishCreateRequest {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct InfoResponse {
+    info: String,
+    user: Option<User>,
+    session: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum UserRole {
+    Default,
+    Admin,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Credentials {
     name: String,
     pass: String,
@@ -47,9 +47,18 @@ pub struct WishContent {
 
 #[derive(Serialize, Deserialize)]
 pub struct Wish {
+    id: RecordId,
     content: String,
     status: WishStatus,
+    created_by: Option<RecordId>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct User {
     id: RecordId,
+    name: String,
+    pass: String,
+    roles: Vec<UserRole>,
 }
 
 #[get("/")]
@@ -58,9 +67,7 @@ pub async fn paths() -> &'static str {
 
 -----------------------------------------------------------------------------------------------------------------------------------------
         PATH                |           SAMPLE COMMAND
------------------------------------------------------------------------------------------------------------------------------------------
-/api/session: See session data  |  curl -X GET    -H "Content-Type: application/json"                           http://localhost:8080/session
-                            |
+-----------------------------------------------------------------------------------------------------------------------------------------                            |
 /api/wish/{id}:                 |
   Create a wish             |  curl -X POST   -H "Content-Type: application/json" -d '{"content":"Buch"}'     http://localhost:8080/wish/one
   Get a wish                |  curl -X GET    -H "Content-Type: application/json"                             http://localhost:8080/wish/one
@@ -76,11 +83,19 @@ curl -X POST -H "Content-Type: application/json" -d '{"name": "Test", "pass":"12
 /api/new_token: Get instructions for a new token if yours has expired"#
 }
 
-#[get("/api/session")]
-pub async fn session() -> Result<Json<String>, Error> {
-    let res: Option<String> = DB.query("RETURN <string>$session").await?.take(0)?;
-
-    Ok(Json(res.unwrap_or("No session data found!".into())))
+#[get("/api/check/auth")]
+pub async fn check_auth(req: HttpRequest) -> Result<Json<InfoResponse>, Error> {
+    let auth: Result<AuthToken, &'static str> = req.try_into();
+    let auth = auth.map_err(|e| return Error::Db(e.into()))?;
+    DB.authenticate(auth.0).await?;
+    let session: Option<String> = DB.query("RETURN <string>$session").await?.take(0)?;
+    let user: Option<User> = DB.query("SELECT * FROM $auth").await?.take(0)?;
+    DB.invalidate().await?;
+    Ok(Json(InfoResponse {
+        info: "Success!".into(),
+        user,
+        session,
+    }))
 }
 
 #[post("/api/wish")]
@@ -138,7 +153,7 @@ pub async fn delete_wish(id: Path<String>, req: HttpRequest) -> Result<Json<Opti
     Ok(Json(wish))
 }
 
-#[put("/api/wish/{id}/status/progress")]
+#[patch("/api/wish/{id}/status/progress")]
 /// Update wish progress status
 pub async fn progress_wish_status(
     id: Path<String>,
@@ -155,7 +170,7 @@ pub async fn progress_wish_status(
         }
         Some(mut wish) => {
             match wish.status {
-                WishStatus::Delivered => {
+                WishStatus::Submitted => {
                     wish.status = WishStatus::CreationInProgress;
                 }
                 WishStatus::CreationInProgress => {
@@ -164,7 +179,7 @@ pub async fn progress_wish_status(
                 WishStatus::InDelivery => {
                     wish.status = WishStatus::Delivered;
                 }
-                WishStatus::Submitted => {
+                WishStatus::Delivered => {
                     DB.invalidate().await?;
                     return Ok(Json(None));
                 }
@@ -187,7 +202,14 @@ pub async fn list_wishes(req: HttpRequest) -> Result<Json<Vec<Wish>>, Error> {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Params<'a> {
+struct SignupParams<'a> {
+    name: &'a str,
+    pass: &'a str,
+    roles: Vec<UserRole>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SigninParams<'a> {
     name: &'a str,
     pass: &'a str,
 }
@@ -199,9 +221,10 @@ pub async fn register_user(req: Json<Credentials>) -> Result<Json<String>, Error
             access: "account",
             namespace: NAMESPACE,
             database: DATABASE,
-            params: Params {
+            params: SignupParams {
                 name: &req.name,
                 pass: &req.pass,
+                roles: vec![UserRole::Default],
             },
         })
         .await?
@@ -210,13 +233,13 @@ pub async fn register_user(req: Json<Credentials>) -> Result<Json<String>, Error
 }
 
 #[post("/api/login")]
-pub async fn get_new_token(req: Json<Credentials>) -> Result<Json<String>, Error> {
+pub async fn login(req: Json<Credentials>) -> Result<Json<String>, Error> {
     let jwt = DB
         .signin(Record {
             access: "account",
             namespace: NAMESPACE,
             database: DATABASE,
-            params: Params {
+            params: SigninParams {
                 name: &req.name,
                 pass: &req.pass,
             },
