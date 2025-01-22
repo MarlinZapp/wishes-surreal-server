@@ -53,6 +53,15 @@ pub struct Wish {
     created_by: Option<RecordId>,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct WishWithUsername {
+    id: RecordId,
+    content: String,
+    status: WishStatus,
+    created_by: Option<RecordId>,
+    username: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct User {
     id: RecordId,
@@ -191,12 +200,24 @@ pub async fn progress_wish_status(
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct WishesQueryParams {
+    with_username: bool,
+}
 #[get("/api/wishes")]
-pub async fn list_wishes(req: HttpRequest) -> Result<Json<Vec<Wish>>, Error> {
+pub async fn list_wishes(
+    req: HttpRequest,
+    query_params: actix_web::web::Query<WishesQueryParams>,
+) -> Result<Json<Vec<WishWithUsername>>, Error> {
     let auth: Result<AuthToken, &'static str> = req.try_into();
     let auth = auth.map_err(|e| return Error::Db(e.into()))?;
     DB.authenticate(auth.0).await?;
-    let wishes = DB.select(TABLE_WISH).await?;
+    let query = if query_params.with_username {
+        format!("SELECT *, created_by.name AS username FROM {TABLE_WISH}")
+    } else {
+        format!("SELECT * FROM {TABLE_WISH}")
+    };
+    let wishes: Vec<WishWithUsername> = DB.query(query).await?.take(0)?;
     DB.invalidate().await?;
     Ok(Json(wishes))
 }
