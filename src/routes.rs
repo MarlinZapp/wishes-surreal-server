@@ -73,23 +73,36 @@ pub struct User {
 #[get("/")]
 pub async fn paths() -> &'static str {
     r#"
-
------------------------------------------------------------------------------------------------------------------------------------------
-        PATH                |           SAMPLE COMMAND
------------------------------------------------------------------------------------------------------------------------------------------                            |
-/api/wish/{id}:                 |
-  Create a wish             |  curl -X POST   -H "Content-Type: application/json" -d '{"content":"Buch"}'     http://localhost:8080/wish/one
-  Get a wish                |  curl -X GET    -H "Content-Type: application/json"                             http://localhost:8080/wish/one
-  Progress to next status   |  curl -X PUT    -H "Content-Type: application/json"                             http://localhost:8080/wish/one
-  Submitted -> CreationInProgress -> InDelivery -> Delivered
-  Delete a wish             |  curl -X DELETE -H "Content-Type: application/json"                             http://localhost:8080/wish/one
-                            |
-/api/wishes: List all wishes    |  curl -X GET    -H "Content-Type: application/json"                           http://localhost:8080/wishes
-
-/api/register: Register a new user.
-curl -X POST -H "Content-Type: application/json" -d '{"name": "Test", "pass":"123"}' http://localhost:8080/register
-
-/api/new_token: Get instructions for a new token if yours has expired"#
+====================================================================================================================================================================================================================================
+    PATH            |   METHOD      |   DESCRIPTION                                 |   SAMPLE COMMAND
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+/api/wish/{id}      |   POST        | Create a wish                                 | curl -X POST -H "Content-Type: application/json" -H "Authorization: YOUR_JWT_GOES_HERE" -d '{"content":"Buch"}' http://localhost:8080/api/wish
+                    |               | [Needs authenticated session]                 |
+                    |               |                                               |
+                    |   GET         | Get a wish                                    | curl -X GET -H "Content-Type: application/json" -H "Authorization: YOUR_JWT_GOES_HERE" http://localhost:8080/api/wish/wish_id
+                    |               | [Needs authenticated session]                 |
+                    |               |                                               |
+                    |   PATCH       | Progress to next status                       | curl -X PATCH -H "Content-Type: application/json" -H "Authorization: YOUR_JWT_GOES_HERE" http://localhost:8080/api/wish/wish_id/status/progress
+                    |               | Submitted -> CreationInProgress ->            |
+                    |               | InDelivery -> Delivered                       |
+                    |               | [Needs authenticated session]                 |
+                    |               |                                               |
+                    |               |                                               |
+                    |   DELETE      | Delete a wish                                 | curl -X DELETE -H "Content-Type: application/json" -H "Authorization: YOUR_JWT_GOES_HERE" http://localhost:8080/api/wish/wish_id
+                    |               | [Needs authenticated session]                 |
+                    |               |                                               |
+-------------------------------------------------------------------------------------------------------------------------
+/api/wishes         |   GET         | List all wishes                               | curl -X GET -H "Content-Type: application/json" -H "Authorization: YOUR_JWT_GOES_HERE" http://localhost:8080/api/wishes
+                    |               | [Needs authenticated session]                 |
+                    |               |                                               |
+-------------------------------------------------------------------------------------------------------------------------
+/api/register       |   POST        | Register a new user                           | curl -X POST   -H "Content-Type: application/json" -d '{"name": "Test", "pass":"123"}' http://localhost:8080/api/register
+                    |               |                                               |
+-------------------------------------------------------------------------------------------------------------------------
+/api/login          |   POST        | Login as existing user                        | curl -X POST   -H "Content-Type: application/json" -d '{"name": "Test", "pass":"123"}' http://localhost:8080/api/login
+                    |               |                                               |
+=========================================================================================================================
+    "#
 }
 
 #[get("/api/check/auth")]
