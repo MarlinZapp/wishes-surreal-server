@@ -22,8 +22,10 @@ static DB: LazyLock<Surreal<Db>> = LazyLock::new(|| Surreal::init());
 
 #[actix_web::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port = std::env::args().nth(1).unwrap_or("2379".to_string());
-    DB.connect::<TiKv>((format!("127.0.0.1:{port}"), Config::default().strict()))
+    let host_with_port = std::env::args()
+        .nth(1)
+        .unwrap_or("127.0.0.1:2379".to_string());
+    DB.connect::<TiKv>((format!("{host_with_port}"), Config::default().strict()))
         .await?;
 
     DB.signin(Root {
@@ -77,7 +79,7 @@ DEFINE ACCESS OVERWRITE {ACCESS_RULE_ACCOUNT} ON DATABASE TYPE RECORD
     ))
     .await?;
 
-    println!("SurrealDB server connected to TiKv Cluster on 127.0.0.1:{port}. Accessible via http://localhost:8080");
+    println!("SurrealDB server connected to TiKv Cluster on 127.0.0.1:{host_with_port}. Accessible via http://localhost:8080");
     HttpServer::new(|| {
         App::new()
             .service(routes::check_auth)
